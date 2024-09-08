@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFC Reflex Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        #gameCircle {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            margin: 50px auto;
+            transition: background-color 0.5s;
+            background-color: gray; /* Default inactive color */
+        }
+        /* Remove the ::after pseudo-element and related styles */
+        /* Remove the @keyframes rotateGradient */
+        #scores {
+            text-align: center;
+            font-size: 24px;
+            margin-top: 20px;
+        }
+        #pointCounter {
+            text-align: center;
+            font-size: 36px;
+            font-weight: bold;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>NFC Reflex Game</h1>
+    <div id="status"></div>
+    <div id="qrCode"></div>
+    <div id="gameArea" style="display: none;">
+        <div id="gameCircle"></div>
+        <div id="pointCounter">+0</div>
+        <div id="scores">
+            <span id="player1Score">Player 1: 0</span> | 
+            <span id="player2Score">Player 2: 0</span>
+        </div>
+    </div>
+    <button id="tryAgain" style="display: none;" onclick="location.reload()">Try Again</button>
+
+    <script>
+        const status = document.getElementById('status');
+        const qrCode = document.getElementById('qrCode');
+        const playerData = document.getElementById('playerData');
+        const tryAgainBtn = document.getElementById('tryAgain');
+        let player1Id, player2Id;
+
+        async function scanPlayer(playerNumber) {
+            status.textContent = `Player ${playerNumber}, please scan your NFC tag`;
+            try {
+                const response = await axios.post(`/scan_player/${playerNumber}`);
+                if (response.data.status === 'success') {
+                    const scannedPlayerId = response.data.playerId;
+                    if (playerNumber === 2 && scannedPlayerId === player1Id) {
+                        status.textContent = `This tag was already scanned for Player 1. Please use a different tag for Player 2.`;
+                        setTimeout(() => scanPlayer(2), 2000);
+                        return;
+                    }
+                    if (playerNumber === 1) {
+                        player1Id = scannedPlayerId;
+                        setTimeout(() => scanPlayer(2), 500);
+                    } else {
+                        player2Id = scannedPlayerId;
+                        getPlayerData();
+                    }
+                } else if (response.data.status === 'not_registered') {
+                    const playerId = response.data.playerId; // Store the playerId
+                    qrCode.innerHTML = `<img src="data:image/png;base64,${response.data.qrCode}">`;
+                    status.textContent = `Player ${playerNumber}, please register using the QR code`;
+                    checkRegistration(playerId, playerNumber);
+                } else {
+                    status.textContent = 'Error: No NFC tag detected. Please try again.';
+                    tryAgainBtn.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                status.textContent = 'An error occurred. Please try again.';
+                tryAgainBtn.style.display = 'block';
+            }
+        }
+
+        async function checkRegistration(playerId, playerNumber) {
+            const startTime = Date.now();
+            const checkInterval = setInterval(async () => {
+                try {
+                    // Change this line to call the Flask server instead
+                    const response = await axios.get(`/check_registration/${playerId}`);
+                    if (response.data.registered) {
+                        clearInterval(checkInterval);
+                        qrCode.innerHTML = '';
+                        status.textContent = `Player ${playerNumber} registered successfully!`;
+                        if (playerNumber === 1) {
+                            player1Id = playerId;
+                            setTimeout(() => scanPlayer(2), 2000);
+                        } else {
+                            player2Id = playerId;
+                            getPlayerData();
+                        }
+                    } else if (Date.now() - startTime > 180000) {  // 3 minutes timeout
+                        clearInterval(checkInterval);
+                        status.textContent = 'Time limit exceeded';
+                        tryAgainBtn.style.display = 'block';
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                }
+            }, 4000);  // Check every 4 seconds
+        }
+
+        async function getPlayerData() {
+            try {
+                // Change this line to call the Flask server instead
+                const response = await axios.post('/get_player_data', { player1Id, player2Id });
+                const { player1, player2 } = response.data;
+                status.textContent = `Players registered: ${player1.name} and ${player2.name}`;
+                startGame();
+            } catch (error) {
+                console.error('Error:', error);
+                status.textContent = 'An error occurred while fetching player data.';
+            }
+        }
+
+        async function startGame() {
+            const gameArea = document.getElementById('gameArea');
+            const gameCircle = document.getElementById('gameCircle');
+            const player1ScoreElement = document.getElementById('player1Score');
+            const player2ScoreElement = document.getElementById('player2Score');
+            
+            gameArea.style.display = 'block';
+            status.textContent = 'Game started! Tap your NFC tag when the circle turns green.';
+
+            let currentColor = 'gray';
+            let canTap = false; // Start with canTap as false
+
+            function changeColor() {
+                if (!canTap) return;
+
+                const random = Math.random();
+                if (random < 0.35) {
+                    currentColor = 'red';
+                } else if (random < 0.65) {
+                    currentColor = 'green';
+                } else if (random < 0.80) {
+                    currentColor = 'orange';
+                } else if (random < 0.95) {
+                    currentColor = 'purple';
+                } else {
+                    currentColor = 'gold';
+                }
+                gameCircle.style.backgroundColor = currentColor;
+                
+                // Schedule next random color change without changing to gray
+                setTimeout(() => {
+                    canTap = false;
+                    setTimeout(() => {
+                        canTap = true;
+                        changeColor();
+                    }, 500);
+                }, 4000 + Math.random() * 8000);
+            }
+
+            // Initial delay before starting the game
+            setTimeout(() => {
+                canTap = true;
+                changeColor();
+            }, 2000);
+
+            async function checkNFCTap() {
+                if (!canTap) {
+                    setTimeout(checkNFCTap, 100);
+                    return;
+                }
+
+                try {
+                    const response = await axios.post('/check_nfc_tap', { 
+                        player1Id, 
+                        player2Id,
+                        currentColor // Send the current color to the backend
+                    });
+                    if (response.data.tapped) {
+                        let pointChange = response.data.pointChange;
+                        updateScores(response.data.player1Score, response.data.player2Score, pointChange, response.data.tappedPlayerId);
+                        
+                        // Disable tapping and set color to gray
+                        canTap = false;
+                        gameCircle.style.backgroundColor = 'gray';
+                        setTimeout(() => {
+                            canTap = true;
+                            changeColor(); // Change color after the delay
+                        }, 2000);
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                }
+                setTimeout(checkNFCTap, 100);
+            }
+
+            checkNFCTap();
+        }
+
+        function updateScores(player1Score, player2Score, pointChange, tappedPlayerId) {
+            const player1ScoreElement = document.getElementById('player1Score');
+            const player2ScoreElement = document.getElementById('player2Score');
+            const pointCounter = document.getElementById('pointCounter');
+
+            player1ScoreElement.textContent = `Player 1: ${player1Score}`;
+            player2ScoreElement.textContent = `Player 2: ${player2Score}`;
+
+            pointCounter.textContent = pointChange >= 0 ? `+${pointChange}` : pointChange;
+            pointCounter.style.color = pointChange >= 0 ? 'green' : 'red';
+
+            // Highlight the player who tapped
+            if (tappedPlayerId === player1Id) {
+                player1ScoreElement.style.fontWeight = 'bold';
+                player2ScoreElement.style.fontWeight = 'normal';
+            } else {
+                player1ScoreElement.style.fontWeight = 'normal';
+                player2ScoreElement.style.fontWeight = 'bold';
+            }
+
+            // Reset styles after a short delay
+            setTimeout(() => {
+                player1ScoreElement.style.fontWeight = 'normal';
+                player2ScoreElement.style.fontWeight = 'normal';
+                pointCounter.textContent = '+0';
+                pointCounter.style.color = 'black';
+            }, 1000);
+        }
+
+        scanPlayer(1);
+    </script>
+</body>
+</html>
